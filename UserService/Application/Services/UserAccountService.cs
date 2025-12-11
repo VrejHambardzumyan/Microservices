@@ -1,38 +1,94 @@
-﻿using EnrollmentService.Infrastructure.Persistence;
-using EnrollmentService.Domain.Entities;
-using Microsoft.EntityFrameworkCore;
-using EnrollmentService.Application.Messaging;
+﻿using UserService.Domain.Entities;
+using UserService.Domain.Repositories;
+using UserService.Application.DTOs;
 
-namespace EnrollmentService.Application.Services;
-
-public class EnrollmentService
+namespace UserService.Application.Services
 {
-    private readonly EnrollmentDbContext _db;
-    private readonly EnrollmentPriceRequester _priceRequester;
-
-    public EnrollmentService(EnrollmentDbContext db, EnrollmentPriceRequester priceRequester)
+    public interface IUserAccountService
     {
-        _db = db;
-        _priceRequester = priceRequester;
+        Task<UserAccountDto> GetByIdAsync(Guid id);
+        Task<UserAccountDto> CreateAsync(CreateUserAccountDto dto);
+        Task<UserAccountDto> UpdateAsync(Guid id, UpdateUserAccountDto dto);
+        Task<bool> DeleteAsync(Guid id);
     }
 
-    public async Task<Guid> CreateEnrollmentAsync(Guid userId, string sku)
+    public class UserAccountService : IUserAccountService
     {
-        var correlationId = _priceRequester.RequestItemPrice(sku, "USD");
+        private readonly IUserAccountRepository _repository;
 
-        var enrollment = new Enrollment
+        public UserAccountService(IUserAccountRepository repository)
         {
-            Id = Guid.NewGuid(),
-            UserId = userId,
-            ItemSku = sku,
-            Status = "Pending"
-        };
+            _repository = repository;
+        }
 
-        _db.Entry(enrollment).Property("CorrelationId").CurrentValue = correlationId;
+        public async Task<UserAccountDto> GetByIdAsync(Guid id)
+        {
+            var entity = await _repository.GetByIdAsync(id);
+            if (entity == null) return null;
 
-        _db.Enrollments.Add(enrollment);
-        await _db.SaveChangesAsync();
+            return new UserAccountDto
+            {
+                Id = entity.Id,
+                Username = entity.Username,
+                Email = entity.Email,
+                CreatedAt = entity.CreatedAt
+            };
+        }
 
-        return enrollment.Id;
+        public async Task<UserAccountDto> CreateAsync(CreateUserAccountDto dto)
+        {
+            var entity = new UserAccount
+            {
+                Id = Guid.NewGuid(),
+                Username = dto.Username,
+                Email = dto.Email,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await _repository.AddAsync(entity);
+            await _repository.SaveChangesAsync();
+
+            return new UserAccountDto
+            {
+                Id = entity.Id,
+                Username = entity.Username,
+                Email = entity.Email,
+                CreatedAt = entity.CreatedAt
+            };
+        }
+
+        public async Task<UserAccountDto> UpdateAsync(Guid id, UpdateUserAccountDto dto)
+        {
+            var entity = await _repository.GetByIdAsync(id);
+            if (entity == null) return null;
+
+            entity.Username = dto.Username ?? entity.Username;
+            entity.Email = dto.Email ?? entity.Email;
+
+            if (!string.IsNullOrWhiteSpace(dto.Password))
+                entity.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
+
+            await _repository.SaveChangesAsync();
+
+            return new UserAccountDto
+            {
+                Id = entity.Id,
+                Username = entity.Username,
+                Email = entity.Email,
+                CreatedAt = entity.CreatedAt
+            };
+        }
+
+        public async Task<bool> DeleteAsync(Guid id)
+        {
+            var entity = await _repository.GetByIdAsync(id);
+            if (entity == null) return false;
+
+            _repository.Delete(entity);
+            await _repository.SaveChangesAsync();
+
+            return true;
+        }
     }
 }
